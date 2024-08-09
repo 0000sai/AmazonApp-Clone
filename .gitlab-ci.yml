@@ -1,0 +1,66 @@
+stages:
+    - npm
+    - sonar
+    - trivy file scan
+    - docker
+    - trivy image scan
+    - deploy
+Install dependecy:
+    stage: npm
+    image:
+        name: node:16
+    script:
+        - npm install
+sonarqube-check:
+  stage: sonar
+  image:
+    name: sonarsource/sonar-scanner-cli:latest
+    entrypoint: [""]
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"  # Defines the location of the analysis task cache
+    GIT_DEPTH: "0"  # Tells git to fetch all the branches of the project, required by the analysis task
+  cache:
+    key: "${CI_JOB_NAME}"
+    paths:
+      - .sonar/cache
+  script:
+    - sonar-scanner
+  allow_failure: true
+  only:
+    - main
+Trivy file scan:
+  stage: trivy file scan
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  script:
+    - trivy fs .
+Docker build and push:
+  stage: docker
+  image:
+    name: docker:latest
+  services:
+    - docker:dind
+  script:
+    - docker build  -t amazon .
+    - docker tag amazon sreedhar8897/amazon:latest
+    - docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+    - docker push sreedhar8897/amazon:latest
+Scan image:
+  stage: trivy image scan
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  script:
+    - trivy image sreedhar8897/amazon:latest
+deploy:
+  stage: deploy
+  tags:
+    - amazon
+  script:
+    - docker run -d --name amazon -p 3000:3000 sreedhar8897/amazon:latest
+    - aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+    - aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+    - aws configure set region $AWS_REGION
+    - aws eks --region us-east-1 update-kubeconfig --name Amazon-EKS-Cluster
+    - kubectl apply -f deployment-service.yml
